@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Vibe Coding 日历</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="page-shell">
+      <aside class="control-panel">
+        <div class="panel-head">
+          <p class="eyebrow">Vibe Coding Calendar</p>
+          <h1>我的 Vibe Coding 日历</h1>
+          <p class="panel-copy">
+            记录灵感日期、网站截图和当日开销，自动生成按月展示的项目日历。
+          </p>
+        </div>
+
+        <section class="auth-card">
+          <div class="auth-copy">
+            <p class="eyebrow">Cloud Sync</p>
+            <h3>登录后只看自己的数据</h3>
+            <p id="auth-hint">
+              用邮箱 Magic Link 登录。登录后才能新增、编辑和删除云端记录。
+            </p>
+          </div>
+
+          <form id="auth-form" class="auth-form">
+            <label>
+              <span>邮箱</span>
+              <input
+                type="email"
+                name="email"
+                placeholder="you@example.com"
+                autocomplete="email"
+                required
+              />
+            </label>
+            <div class="auth-actions">
+              <button type="submit" id="auth-submit">发送登录链接</button>
+              <button type="button" id="sign-out" class="ghost-button" hidden>
+                退出登录
+              </button>
+            </div>
+          </form>
+
+          <p id="auth-status" class="auth-status">正在检查登录状态...</p>
+        </section>
+
+        <form id="entry-form" class="entry-form">
+          <div id="form-status" class="form-status" hidden>
+            <span id="form-status-text"></span>
+            <button type="button" id="cancel-edit" class="text-button">取消编辑</button>
+          </div>
+          <label>
+            <span>日期</span>
+            <input type="date" name="date" required />
+          </label>
+          <label>
+            <span>项目名</span>
+            <input
+              type="text"
+              name="title"
+              placeholder="例如：Landing Page 第一个版本"
+              maxlength="40"
+              required
+            />
+          </label>
+          <label>
+            <span>链接（可选）</span>
+            <input
+              type="url"
+              name="link"
+              placeholder="https://example.com"
+            />
+          </label>
+          <label>
+            <span>当日开销（元）</span>
+            <input
+              type="number"
+              name="cost"
+              placeholder="0"
+              min="0"
+              step="1"
+              required
+            />
+          </label>
+          <label>
+            <span>备注（可选）</span>
+            <textarea
+              name="notes"
+              rows="3"
+              placeholder="记录这天的想法、实验或成果"
+              maxlength="120"
+            ></textarea>
+          </label>
+          <label class="file-input">
+            <span id="image-label">网站预览图</span>
+            <input type="file" name="image" accept="image/*" required />
+          </label>
+
+          <div class="form-actions">
+            <button type="submit" id="submit-button">添加到时间轴</button>
+            <button type="button" id="reset-demo" class="ghost-button">
+              恢复示例数据
+            </button>
+          </div>
+        </form>
+      </aside>
+
+      <main class="dashboard">
+        <section class="hero-card">
+          <div>
+            <p class="eyebrow">Dashboard</p>
+            <h2>按月查看你的 Vibe Coding 进展</h2>
+          </div>
+          <div class="hero-metrics">
+            <div class="metric">
+              <span>记录天数</span>
+              <strong id="metric-days">0</strong>
+            </div>
+            <div class="metric">
+              <span>项目条目</span>
+              <strong id="metric-entries">0</strong>
+            </div>
+            <div class="metric">
+              <span>累计开销</span>
+              <strong id="metric-total">¥0</strong>
+            </div>
+          </div>
+        </section>
+
+        <section class="board-card">
+          <div class="section-head">
+            <h3>我的进展</h3>
+            <p>每个月是一个日历模块，往下滚动查看下个月；下方保留开销走势图。</p>
+          </div>
+
+          <div class="timeline-wrap">
+            <div id="timeline" class="timeline"></div>
+          </div>
+
+          <div class="cost-section">
+            <div class="cost-label-row">
+              <h3>花费</h3>
+              <strong id="cost-total">¥0</strong>
+            </div>
+            <div id="cost-chart" class="cost-chart"></div>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <template id="event-card-template">
+      <article class="event-card">
+        <div class="event-thumb-wrap">
+          <img class="event-thumb" alt="" />
+        </div>
+        <div class="event-content">
+          <div class="event-title-row">
+            <h4 class="event-title"></h4>
+          </div>
+          <p class="event-date"></p>
+          <p class="event-notes"></p>
+          <a class="event-link" target="_blank" rel="noreferrer"></a>
+          <div class="event-actions">
+            <button type="button" class="edit-event" aria-label="编辑条目" title="编辑">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M4 20h4.5L19 9.5 14.5 5 4 15.5V20Z" />
+                <path d="M13.5 6 18 10.5" />
+              </svg>
+            </button>
+            <button type="button" class="delete-event" aria-label="删除条目">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M9 4.75h6" />
+                <path d="M5.75 7.25h12.5" />
+                <path d="M8.25 7.25v10a1 1 0 0 0 1 1h5.5a1 1 0 0 0 1-1v-10" />
+                <path d="M10 10.25v4.5" />
+                <path d="M14 10.25v4.5" />
+              </svg>
+            </button>
+          </div>
+        </div>
+      </article>
+    </template>
+
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="./app.js"></script>
+  </body>
+</html>
