@@ -183,7 +183,7 @@ form.addEventListener("submit", async (event) => {
         link,
         notes,
         cost,
-        image_url: imageUpload?.imageUrl ?? current.image,
+        image_url: imageUpload?.imagePath ? null : current.rawImageUrl ?? null,
         image_path: imageUpload?.imagePath ?? current.imagePath ?? null,
       };
 
@@ -210,7 +210,7 @@ form.addEventListener("submit", async (event) => {
           link,
           notes,
           cost,
-          image_url: imageUpload.imageUrl,
+          image_url: null,
           image_path: imageUpload.imagePath,
         }),
         "写入记录",
@@ -394,6 +394,7 @@ async function loadEntries() {
       notes: row.notes || "",
       link: row.link || "",
       cost: row.cost || 0,
+      rawImageUrl: row.image_url || "",
       image: await resolveImageUrl(row),
       imagePath: row.image_path,
     })),
@@ -699,18 +700,8 @@ async function uploadImage(file) {
     throw uploadError;
   }
 
-  const { data, error: signedUrlError } = await withTimeout(
-    supabaseClient.storage.from(BUCKET_NAME).createSignedUrl(filePath, SIGNED_URL_TTL_SECONDS),
-    "生成图片地址",
-  );
-
-  if (signedUrlError) {
-    throw signedUrlError;
-  }
-
   return {
     imagePath: filePath,
-    imageUrl: data.signedUrl,
   };
 }
 
@@ -833,6 +824,10 @@ function withTimeout(promise, label, timeoutMs = REQUEST_TIMEOUT_MS) {
 function formatError(error) {
   if (error instanceof Error && error.message) {
     return error.message;
+  }
+
+  if (typeof error?.details === "string" && error.details) {
+    return [error.message, error.details, error.hint].filter(Boolean).join(" ");
   }
 
   if (typeof error?.message === "string" && error.message) {
