@@ -154,9 +154,9 @@
 
     <template id="event-card-template">
       <article class="event-card">
-        <div class="event-thumb-wrap">
+        <button type="button" class="event-thumb-wrap event-preview-trigger" aria-label="查看大图">
           <img class="event-thumb" alt="" />
-        </div>
+        </button>
         <div class="event-content">
           <div class="event-title-row">
             <h4 class="event-title"></h4>
@@ -184,6 +184,41 @@
         </div>
       </article>
     </template>
+
+    <div id="preview-modal" class="preview-modal" hidden>
+      <div class="preview-backdrop" data-close-preview></div>
+      <div
+        class="preview-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="preview-title"
+      >
+        <button
+          type="button"
+          class="preview-close"
+          id="preview-close"
+          aria-label="关闭预览"
+          data-close-preview
+        >
+          关闭
+        </button>
+        <div class="preview-media-wrap">
+          <img id="preview-image" class="preview-image" alt="" />
+        </div>
+        <div class="preview-content">
+          <p id="preview-meta" class="preview-meta"></p>
+          <h3 id="preview-title" class="preview-title"></h3>
+          <p id="preview-notes" class="preview-notes"></p>
+          <a
+            id="preview-link"
+            class="preview-link"
+            target="_blank"
+            rel="noreferrer"
+            hidden
+          ></a>
+        </div>
+      </div>
+    </div>
 
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="./app.js"></script>

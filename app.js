@@ -2,6 +2,8 @@ const SUPABASE_URL = "https://lwlyefbubroohjgslsjy.supabase.co";
 const SUPABASE_PUBLISHABLE_KEY =
   "sb_publishable_w0RQx_aqJ35DOfpLobKp1w_jOB8CSxI";
 const BUCKET_NAME = "screenshots";
+const REQUEST_TIMEOUT_MS = 20000;
+const SIGNED_URL_TTL_SECONDS = 60 * 60 * 24 * 7;
 
 const demoEntries = [
   {
@@ -84,10 +86,18 @@ const metricDays = document.querySelector("#metric-days");
 const metricEntries = document.querySelector("#metric-entries");
 const metricTotal = document.querySelector("#metric-total");
 const costTotal = document.querySelector("#cost-total");
+const previewModal = document.querySelector("#preview-modal");
+const previewCloseButton = document.querySelector("#preview-close");
+const previewImage = document.querySelector("#preview-image");
+const previewMeta = document.querySelector("#preview-meta");
+const previewTitle = document.querySelector("#preview-title");
+const previewNotes = document.querySelector("#preview-notes");
+const previewLink = document.querySelector("#preview-link");
 
 let entries = [];
 let editingId = null;
 let currentUser = null;
+let lastActiveElement = null;
 
 boot();
 
@@ -154,12 +164,18 @@ form.addEventListener("submit", async (event) => {
   setFormPending(true, isEditing ? "正在保存修改..." : "正在上传并保存...");
 
   try {
+    setFormMessage(
+      imageFile instanceof File && imageFile.size > 0 ? "正在上传图片..." : "正在保存记录...",
+    );
+
     const imageUpload =
       imageFile instanceof File && imageFile.size > 0
         ? await uploadImage(imageFile)
         : null;
 
     if (isEditing) {
+      setFormMessage("正在写入修改...");
+
       const current = entries.find((entry) => entry.id === editingId);
       const nextPayload = {
         event_date: date,
@@ -171,10 +187,10 @@ form.addEventListener("submit", async (event) => {
         image_path: imageUpload?.imagePath ?? current.imagePath ?? null,
       };
 
-      const { error } = await supabaseClient
-        .from("entries")
-        .update(nextPayload)
-        .eq("id", editingId);
+      const { error } = await withTimeout(
+        supabaseClient.from("entries").update(nextPayload).eq("id", editingId),
+        "保存修改",
+      );
 
       if (error) {
         throw error;
@@ -184,16 +200,21 @@ form.addEventListener("submit", async (event) => {
         await deleteImagePath(current.imagePath);
       }
     } else {
-      const { error } = await supabaseClient.from("entries").insert({
-        user_id: currentUser.id,
-        event_date: date,
-        title,
-        link,
-        notes,
-        cost,
-        image_url: imageUpload.imageUrl,
-        image_path: imageUpload.imagePath,
-      });
+      setFormMessage("正在写入记录...");
+
+      const { error } = await withTimeout(
+        supabaseClient.from("entries").insert({
+          user_id: currentUser.id,
+          event_date: date,
+          title,
+          link,
+          notes,
+          cost,
+          image_url: imageUpload.imageUrl,
+          image_path: imageUpload.imagePath,
+        }),
+        "写入记录",
+      );
 
       if (error) {
         throw error;
@@ -201,9 +222,10 @@ form.addEventListener("submit", async (event) => {
     }
 
     exitEditMode();
+    setFormMessage("正在刷新列表...");
     await loadEntries();
   } catch (error) {
-    setFormMessage(`保存失败：${error.message}`);
+    setFormMessage(`保存失败：${formatError(error)}`);
   } finally {
     setFormPending(false);
   }
@@ -218,17 +240,20 @@ resetButton.addEventListener("click", async () => {
   setFormPending(true, "正在导入示例数据...");
 
   try {
-    const { error } = await supabaseClient.from("entries").insert(
-      demoEntries.map((entry) => ({
-        user_id: currentUser.id,
-        event_date: entry.date,
-        title: entry.title,
-        notes: entry.notes,
-        link: entry.link,
-        cost: entry.cost,
-        image_url: entry.image_url,
-        image_path: entry.image_path,
-      })),
+    const { error } = await withTimeout(
+      supabaseClient.from("entries").insert(
+        demoEntries.map((entry) => ({
+          user_id: currentUser.id,
+          event_date: entry.date,
+          title: entry.title,
+          notes: entry.notes,
+          link: entry.link,
+          cost: entry.cost,
+          image_url: entry.image_url,
+          image_path: entry.image_path,
+        })),
+      ),
+      "导入示例数据",
     );
 
     if (error) {
@@ -236,9 +261,10 @@ resetButton.addEventListener("click", async () => {
     }
 
     exitEditMode();
+    setFormMessage("正在刷新列表...");
     await loadEntries();
   } catch (error) {
-    setFormMessage(`导入示例失败：${error.message}`);
+    setFormMessage(`导入示例失败：${formatError(error)}`);
   } finally {
     setFormPending(false);
   }
@@ -246,6 +272,22 @@ resetButton.addEventListener("click", async () => {
 
 cancelEditButton.addEventListener("click", () => {
   exitEditMode();
+});
+
+previewCloseButton.addEventListener("click", () => {
+  closePreviewModal();
+});
+
+previewModal.addEventListener("click", (event) => {
+  if (event.target instanceof HTMLElement && event.target.dataset.closePreview !== undefined) {
+    closePreviewModal();
+  }
+});
+
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && !previewModal.hidden) {
+    closePreviewModal();
+  }
 });
 
 async function boot() {
@@ -260,8 +302,14 @@ async function boot() {
   setFormPending(false);
 
   supabaseClient.auth.onAuthStateChange(async (_event, session) => {
+    const previousUserId = currentUser?.id ?? null;
     currentUser = session?.user ?? null;
-    exitEditMode();
+    const nextUserId = currentUser?.id ?? null;
+
+    if (previousUserId && previousUserId !== nextUserId) {
+      exitEditMode(true);
+    }
+
     applyAuthState();
     await loadEntries();
   });
@@ -321,30 +369,35 @@ async function loadEntries() {
     return;
   }
 
-  const { data, error } = await supabaseClient
-    .from("entries")
-    .select("*")
-    .eq("user_id", currentUser.id)
-    .order("event_date", { ascending: true })
-    .order("created_at", { ascending: true });
+  const { data, error } = await withTimeout(
+    supabaseClient
+      .from("entries")
+      .select("*")
+      .eq("user_id", currentUser.id)
+      .order("event_date", { ascending: true })
+      .order("created_at", { ascending: true }),
+    "读取记录",
+  );
 
   if (error) {
-    timeline.innerHTML = `<div class="empty-state">云端读取失败：${error.message}</div>`;
+    timeline.innerHTML = `<div class="empty-state">云端读取失败：${formatError(error)}</div>`;
     costChart.innerHTML = "";
     updateMetrics([]);
     return;
   }
 
-  entries = data.map((row) => ({
-    id: row.id,
-    date: row.event_date,
-    title: row.title,
-    notes: row.notes || "",
-    link: row.link || "",
-    cost: row.cost || 0,
-    image: row.image_url,
-    imagePath: row.image_path,
-  }));
+  entries = await Promise.all(
+    data.map(async (row) => ({
+      id: row.id,
+      date: row.event_date,
+      title: row.title,
+      notes: row.notes || "",
+      link: row.link || "",
+      cost: row.cost || 0,
+      image: await resolveImageUrl(row),
+      imagePath: row.image_path,
+    })),
+  );
 
   render();
 }
@@ -522,11 +575,17 @@ function renderTimeline(months) {
 
       cell.items.forEach((item) => {
         const node = template.content.firstElementChild.cloneNode(true);
-        node.querySelector(".event-thumb").src = item.image;
-        node.querySelector(".event-thumb").alt = item.title;
+        const previewTrigger = node.querySelector(".event-preview-trigger");
+        const previewImageNode = node.querySelector(".event-thumb");
+        previewImageNode.src = item.image;
+        previewImageNode.alt = item.title;
         node.querySelector(".event-title").textContent = item.title;
         node.querySelector(".event-date").textContent = `${formatDateCN(item.date)} · ¥${formatCurrency(item.cost)}`;
         node.querySelector(".event-notes").textContent = item.notes || "无备注";
+
+        previewTrigger.addEventListener("click", () => {
+          openPreviewModal(item, previewTrigger);
+        });
 
         const link = node.querySelector(".event-link");
         if (item.link) {
@@ -628,22 +687,30 @@ async function uploadImage(file) {
   const extension = file.name.includes(".") ? file.name.split(".").pop() : "png";
   const filePath = `entries/${crypto.randomUUID()}.${extension}`;
 
-  const { error: uploadError } = await supabaseClient.storage
-    .from(BUCKET_NAME)
-    .upload(filePath, file, {
-      contentType: file.type,
+  const { error: uploadError } = await withTimeout(
+    supabaseClient.storage.from(BUCKET_NAME).upload(filePath, file, {
+      contentType: file.type || "application/octet-stream",
       upsert: false,
-    });
+    }),
+    "上传图片",
+  );
 
   if (uploadError) {
     throw uploadError;
   }
 
-  const { data } = supabaseClient.storage.from(BUCKET_NAME).getPublicUrl(filePath);
+  const { data, error: signedUrlError } = await withTimeout(
+    supabaseClient.storage.from(BUCKET_NAME).createSignedUrl(filePath, SIGNED_URL_TTL_SECONDS),
+    "生成图片地址",
+  );
+
+  if (signedUrlError) {
+    throw signedUrlError;
+  }
 
   return {
     imagePath: filePath,
-    imageUrl: data.publicUrl,
+    imageUrl: data.signedUrl,
   };
 }
 
@@ -656,7 +723,10 @@ async function deleteEntry(item) {
   setFormPending(true, "正在删除...");
 
   try {
-    const { error } = await supabaseClient.from("entries").delete().eq("id", item.id);
+    const { error } = await withTimeout(
+      supabaseClient.from("entries").delete().eq("id", item.id),
+      "删除记录",
+    );
 
     if (error) {
       throw error;
@@ -672,18 +742,104 @@ async function deleteEntry(item) {
 
     await loadEntries();
   } catch (error) {
-    setFormMessage(`删除失败：${error.message}`);
+    setFormMessage(`删除失败：${formatError(error)}`);
   } finally {
     setFormPending(false);
   }
 }
 
 async function deleteImagePath(path) {
-  const { error } = await supabaseClient.storage.from(BUCKET_NAME).remove([path]);
+  const { error } = await withTimeout(
+    supabaseClient.storage.from(BUCKET_NAME).remove([path]),
+    "删除图片",
+  );
 
   if (error) {
     console.error(error);
   }
+}
+
+async function resolveImageUrl(row) {
+  if (!row.image_path) {
+    return row.image_url;
+  }
+
+  const { data, error } = await withTimeout(
+    supabaseClient.storage
+      .from(BUCKET_NAME)
+      .createSignedUrl(row.image_path, SIGNED_URL_TTL_SECONDS),
+    "读取图片地址",
+  );
+
+  if (error) {
+    console.error(error);
+    return row.image_url;
+  }
+
+  return data.signedUrl;
+}
+
+function openPreviewModal(item, trigger) {
+  lastActiveElement = trigger;
+  previewModal.hidden = false;
+  previewModal.classList.add("is-open");
+  document.body.classList.add("modal-open");
+  previewImage.src = item.image;
+  previewImage.alt = item.title;
+  previewMeta.textContent = `${formatDateCN(item.date)} · ¥${formatCurrency(item.cost)}`;
+  previewTitle.textContent = item.title;
+  previewNotes.textContent = item.notes || "无备注";
+
+  if (item.link) {
+    previewLink.href = item.link;
+    previewLink.textContent = "打开链接";
+    previewLink.hidden = false;
+  } else {
+    previewLink.hidden = true;
+    previewLink.removeAttribute("href");
+    previewLink.textContent = "";
+  }
+
+  previewCloseButton.focus();
+}
+
+function closePreviewModal() {
+  previewModal.classList.remove("is-open");
+  previewModal.hidden = true;
+  document.body.classList.remove("modal-open");
+  previewImage.removeAttribute("src");
+
+  if (lastActiveElement instanceof HTMLElement) {
+    lastActiveElement.focus();
+  }
+
+  lastActiveElement = null;
+}
+
+function withTimeout(promise, label, timeoutMs = REQUEST_TIMEOUT_MS) {
+  let timerId;
+
+  const timeoutPromise = new Promise((_, reject) => {
+    timerId = window.setTimeout(() => {
+      reject(new Error(`${label}超时，请检查网络或稍后重试。`));
+    }, timeoutMs);
+  });
+
+  return Promise.race([promise, timeoutPromise]).finally(() => {
+    window.clearTimeout(timerId);
+  });
+}
+
+function formatError(error) {
+  if (error instanceof Error && error.message) {
+    return error.message;
+  }
+
+  if (typeof error?.message === "string" && error.message) {
+    return error.message;
+  }
+
+  return "发生未知错误，请稍后重试。";
 }
 
 function setFormPending(pending, message = "") {
@@ -754,9 +910,13 @@ function enterEditMode(item) {
   form.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
-function exitEditMode() {
+function exitEditMode(resetForm = true) {
   editingId = null;
-  form.reset();
+
+  if (resetForm) {
+    form.reset();
+  }
+
   formStatus.hidden = true;
   formStatusText.textContent = "";
   submitButton.textContent = "添加到时间轴";
